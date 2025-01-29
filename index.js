@@ -1,73 +1,10 @@
 import http from 'http'
-import util from 'node:util'
-import child_process from 'node:child_process'
-const exec = util.promisify(child_process.exec)
+import busboy from 'busboy'
+import { getServerStatus, getAllServersStatus, restartServer } from './management.js'
+import { wantsNewArtifacts, onBuildUpload, onByondUpload, onRustGUpload, doesServerExist } from './deployments.js'
 
 const host = process.env.SERVER_HOST ?? '0.0.0.0'
 const port = process.env.SERVER_PORT ?? 8564
-const containerPrefix = process.env.CONTAINER_PREFIX ?? 'ss13-'
-
-const restarting = new Set()
-
-function serverToContainer(server) {
-  return `${containerPrefix}${server}`
-}
-
-async function getServers() {
-  const { stdout: containers } = await exec(`docker container ls --format='{{.Names}}'`)
-  return containers.trim().split('\n').filter((i) => i.startsWith(containerPrefix)).map((i) => i.replace(containerPrefix, ''))
-}
-
-async function getStateStatus(server) {
-  const { stdout } = await exec(`docker inspect -f '{{.State.Status}}' ${serverToContainer(server)}`)
-  return stdout.trim()
-}
-
-async function getStateHealth(server) {
-  const { stdout } = await exec(`docker inspect -f '{{.State.Health.Status}}' ${serverToContainer(server)}`)
-  return stdout.trim()
-}
-
-async function getStateStartedAt(server) {
-  const { stdout } = await exec(`docker inspect -f '{{.State.StartedAt}}' ${serverToContainer(server)}`)
-  return stdout.trim()
-}
-
-async function getServerStatus(server, servers = null) {
-  if (!servers) {
-    servers = await getServers()
-    if (!servers.includes(server)) throw new Error('Server not found')
-  }
-
-  return {
-    restarting: restarting.has(server),
-    status: await getStateStatus(server),
-    health: await getStateHealth(server),
-    startedAt: await getStateStartedAt(server),
-  }
-}
-
-async function getAllServersStatus() {
-  const servers = await getServers()
-  const ret = {}
-  for (const server of servers) {
-    ret[server] = await getServerStatus(server, servers)
-  }
-  return ret
-}
-
-async function restartServer(server) {
-  if (restarting.has(server)) throw new Error('Already restarting')
-  const servers = await getServers()
-  if (!servers.includes(server)) throw new Error('Server not found')
-  const health = await getStateHealth(server)
-  if (health === 'starting') throw new Error('Currently starting')
-  restarting.add(server)
-  const container = serverToContainer(server)
-  child_process.exec(`docker exec ${container} pkill -USR2 DreamDaemon && docker restart ${container}`, () => {
-    restarting.delete(server)
-  })
-}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${host}`)
@@ -99,6 +36,68 @@ const server = http.createServer(async (req, res) => {
       res.statusCode = 500
       res.end(JSON.stringify({ message: e.message }))
     }
+    return
+  }
+
+  if (
+    url.pathname === '/build/check' &&
+    params.has('server') &&
+    params.has('buildstamp') &&
+    params.has('byond') &&
+    params.has('rustg')
+  ) {
+    const server = params.get('server')
+    const serverExists = await doesServerExist(server)
+    if (!serverExists) {
+      res.statusCode = 400
+      res.end(JSON.stringify({ message: 'Server does not exist' }))
+      return
+    }
+    const wants = await wantsNewArtifacts(
+      server,
+      parseInt(params.get('buildstamp')),
+      params.get('byond'),
+      params.get('rustg')
+    )
+    res.statusCode = 200
+    res.end(JSON.stringify({ outdated: wants }))
+    return
+  }
+
+  if (url.pathname === '/build/upload' && req.method === 'POST' && params.has('server')) {
+    const server = params.get('server')
+    const serverExists = await doesServerExist(server)
+    if (!serverExists) {
+      res.statusCode = 400
+      res.end(JSON.stringify({ message: 'Server does not exist' }))
+      return
+    }
+
+    const bb = busboy({ headers: req.headers })
+    bb.on('file', (name, file, info) => {
+      if (info.mimeType !== 'application/gzip') {
+        file.resume()
+        return
+      }
+      try {
+        if (name === 'build') {
+          onBuildUpload(file, server)
+        } else if (name === 'byond') {
+          onByondUpload(file, server)
+        } else if (name === 'rustg') {
+          onRustGUpload(file, server)
+        } else {
+          file.resume()
+        }
+      } catch (e) {
+        console.error(e.message)
+      }
+    })
+    bb.on('close', () => {
+      res.statusCode = 200
+      res.end(JSON.stringify({ message: 'Success' }))
+    })
+    req.pipe(bb)
     return
   }
 
