@@ -1,7 +1,7 @@
 import http from 'http'
 import busboy from 'busboy'
 import { getServerStatus, getAllServersStatus, restartServer } from './management.js'
-import { wantsNewArtifacts, onBuildUpload, onByondUpload, onRustGUpload, doesServerExist } from './deployments.js'
+import { wantsNewArtifacts, onFileUpload, doesServerExist } from './deployments.js'
 
 const host = process.env.SERVER_HOST ?? '0.0.0.0'
 const port = process.env.SERVER_PORT ?? 8564
@@ -73,19 +73,17 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    const validMimes = ['application/gzip', 'application/zip']
+    const validNames = ['build', 'byond', 'rustg']
     const bb = busboy({ headers: req.headers })
     bb.on('file', (name, file, info) => {
-      if (info.mimeType !== 'application/gzip') {
+      if (!validMimes.includes(info.mimeType)) {
         file.resume()
         return
       }
       try {
-        if (name === 'build') {
-          onBuildUpload(file, server)
-        } else if (name === 'byond') {
-          onByondUpload(file, server)
-        } else if (name === 'rustg') {
-          onRustGUpload(file, server)
+        if (validNames.includes(name)) {
+          onFileUpload(name, file, info, server)
         } else {
           file.resume()
         }

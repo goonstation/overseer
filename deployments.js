@@ -68,51 +68,34 @@ export async function wantsNewArtifacts(server, newBuildStamp, newByond, newRust
   return wants
 }
 
-export async function onBuildUpload(file, server) {
-  const fileName = `build-upload-${server}.tar.gz`
-  const filePath = path.join(os.tmpdir(), fileName)
-  await fs.writeFile(filePath, file)
-
-  const updatePath = `${getServerPath(server)}/update`
-  try {
-    await fs.access(updatePath)
-  } catch {
-    await fs.mkdir(updatePath)
+function getFileTarget(name, server) {
+  if (name === 'build') {
+    return `${getServerPath(server)}/update`
+  } else if (name === 'byond') {
+    return byondRoot
+  } else if (name === 'rustg') {
+    return rustgRoot
   }
-
-  await exec(`tar zxf '${filePath}' -C '${updatePath}'`)
-  await exec(`chown -R ${gameUserOwner}:${gameUserGroup} '${updatePath}'`)
-  await exec(`chmod -R 770 '${updatePath}'`)
 }
 
-export async function onByondUpload(file, server) {
-  const fileName = `byond-upload-${server}.tar.gz`
+export async function onFileUpload(name, file, info, server) {
+  const fileType = info.mimeType === 'application/zip' ? 'zip' : 'tar.gz'
+  const fileName = `${name}-upload-${server}.${fileType}`
   const filePath = path.join(os.tmpdir(), fileName)
   await fs.writeFile(filePath, file)
 
+  const fileTarget = getFileTarget(name, server)
   try {
-    await fs.access(byondRoot)
+    await fs.access(fileTarget)
   } catch {
-    await fs.mkdir(byondRoot)
+    await fs.mkdir(fileTarget)
   }
 
-  await exec(`tar zxf '${filePath}' -C '${byondRoot}'`)
-  await exec(`chown -R ${gameUserOwner}:${gameUserGroup} '${byondRoot}'`)
-  await exec(`chmod -R 770 '${byondRoot}'`)
-}
-
-export async function onRustGUpload(file, server) {
-  const fileName = `rustg-upload-${server}.tar.gz`
-  const filePath = path.join(os.tmpdir(), fileName)
-  await fs.writeFile(filePath, file)
-
-  try {
-    await fs.access(rustgRoot)
-  } catch {
-    await fs.mkdir(rustgRoot)
+  if (fileType === 'zip') {
+    await exec(`unzip '${filePath}' -d '${fileTarget}'`)
+  } else {
+    await exec(`tar zxf '${filePath}' -C '${fileTarget}'`)
   }
-
-  await exec(`tar zxf '${filePath}' -C '${rustgRoot}'`)
-  await exec(`chown -R ${gameUserOwner}:${gameUserGroup} '${rustgRoot}'`)
-  await exec(`chmod -R 770 '${rustgRoot}'`)
+  await exec(`chown -R ${gameUserOwner}:${gameUserGroup} '${fileTarget}'`)
+  await exec(`chmod -R 770 '${fileTarget}'`)
 }
