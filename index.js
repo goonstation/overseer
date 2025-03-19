@@ -1,5 +1,6 @@
 import http from 'http'
 import busboy from 'busboy'
+import './instrument.js'
 import { getServerStatus, getAllServersStatus, restartServer } from './management.js'
 import { wantsNewArtifacts, onFileUpload, doesServerExist } from './deployments.js'
 
