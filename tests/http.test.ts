@@ -36,7 +36,7 @@ async function fixture(t: TestContext, options: FixtureOptions = {}) {
   }
   const services: AppServices = {
     lifecycle,
-    fallbacks: { async upload(file) { for await (const chunk of file) void chunk; return { servers: ['main1'] } }, ...options.fallbacks },
+    fallbacks: { async upload(server, file) { for await (const chunk of file) void chunk; return { server: 'main1' } }, ...options.fallbacks },
     management: {
       async getAllServersStatus() { return { alpha: { ...statusBase, status: 'exited' } } },
       async getServerStatus() { return { ...statusBase, status: 'running' } },
@@ -340,42 +340,43 @@ test('upload admission is counted before asynchronous path checks and released a
   assert.equal((await status.json()).ready, true)
 })
 
-const rawFallback = (body = 'archive') => ({ method: 'POST', headers: { 'Content-Type': 'application/gzip' }, body })
+const rawFallback = (body = 'archive') => ({ method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body })
 
-test('fallback route accepts a raw gzip body and waits for publication while tracked by draining', async (t) => {
+test('fallback route accepts a raw SQLite body and waits for publication while tracked by draining', async (t) => {
   let entered!: () => void
   let finish!: () => void
   const started = new Promise<void>((resolve) => { entered = resolve })
   const gate = new Promise<void>((resolve) => { finish = resolve })
   t.after(() => finish())
-  const { request, lifecycle } = await fixture(t, { fallbacks: { async upload(file) {
+  const { request, lifecycle } = await fixture(t, { fallbacks: { async upload(server, file) {
+    assert.equal(server, 'main1')
     let body = ''
     for await (const chunk of file) body += chunk
     assert.equal(body, 'archive')
     entered()
     await gate
-    return { servers: ['main1', 'main2'] }
+    return { server: 'main1' }
   } } })
-  assert.equal((await request('/fallback/upload')).status, 405)
-  assert.equal((await request('/fallback/upload', { method: 'POST', body: 'bad' })).status, 415)
-  const pending = request('/fallback/upload', rawFallback())
+  assert.equal((await request('/fallback/upload?server=main1')).status, 405)
+  assert.equal((await request('/fallback/upload?server=main1', { method: 'POST', body: 'bad' })).status, 415)
+  const pending = request('/fallback/upload?server=main1', rawFallback())
   await started
   assert.equal(lifecycle.status().active.uploads, 1)
   lifecycle.drain('fallback-drain-attempt-123')
-  assert.equal((await request('/fallback/upload', rawFallback())).status, 503)
+  assert.equal((await request('/fallback/upload?server=main1', rawFallback())).status, 503)
   finish()
   const response = await pending
   assert.equal(response.status, 200)
-  assert.deepEqual(await response.json(), { message: 'Success', servers: ['main1', 'main2'] })
+  assert.deepEqual(await response.json(), { message: 'Success', server: 'main1' })
   assert.equal(lifecycle.status().active.uploads, 0)
 })
 
 test('raw fallback limits cover content-length and chunked bodies without dropping the error response', async (t) => {
   const { request, server } = await fixture(t, { config: { maxRequestBytes: 16, maxUploadBytes: 32 } })
-  assert.equal((await request('/fallback/upload', rawFallback('x'.repeat(17)))).status, 413)
+  assert.equal((await request('/fallback/upload?server=main1', rawFallback('x'.repeat(17)))).status, 413)
   const status = await new Promise<number | undefined>((resolve, reject) => {
-    const req = http.request({ hostname: '127.0.0.1', port: serverPort(server), path: '/fallback/upload', method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/gzip' },
+    const req = http.request({ hostname: '127.0.0.1', port: serverPort(server), path: '/fallback/upload?server=main1', method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
     }, (res) => { res.resume(); resolve(res.statusCode) })
     req.on('error', reject)
     req.write('x'.repeat(17))
@@ -387,17 +388,17 @@ test('raw fallback limits cover content-length and chunked bodies without droppi
 test('fallback deadline aborts work and releases drain tracking before reporting failure', async (t) => {
   let cancelled = false
   const { request, lifecycle } = await fixture(t, { config: { uploadTimeoutMs: 30 }, fallbacks: {
-    async upload(file, { signal } = {}) {
+    async upload(server, file, { signal } = {}) {
       assert.ok(signal)
       for await (const chunk of file) void chunk
       await new Promise((resolve, reject) => signal.addEventListener('abort', () => {
         cancelled = true
         reject(signal.reason)
       }, { once: true }))
-      return { servers: [] }
+      return { server: 'main1' }
     },
   } })
-  assert.equal((await request('/fallback/upload', rawFallback())).status, 408)
+  assert.equal((await request('/fallback/upload?server=main1', rawFallback())).status, 408)
   assert.equal(cancelled, true)
   assert.equal(lifecycle.status().active.uploads, 0)
 })
@@ -407,17 +408,17 @@ test('fallback client disconnect cancels work after the complete request body', 
   let cancelled!: () => void
   const started = new Promise<void>((resolve) => { entered = resolve })
   const aborted = new Promise<void>((resolve) => { cancelled = resolve })
-  const { server, lifecycle } = await fixture(t, { fallbacks: { async upload(file, { signal } = {}) {
+  const { server, lifecycle } = await fixture(t, { fallbacks: { async upload(server, file, { signal } = {}) {
     assert.ok(signal)
     try {
       for await (const chunk of file) void chunk
       entered()
       await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
-      return { servers: [] }
+      return { server: 'main1' }
     } finally { cancelled() }
   } } })
-  const req = http.request({ hostname: '127.0.0.1', port: serverPort(server), path: '/fallback/upload', method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/gzip', 'Content-Length': 7 },
+  const req = http.request({ hostname: '127.0.0.1', port: serverPort(server), path: '/fallback/upload?server=main1', method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream', 'Content-Length': 7 },
   })
   req.on('error', () => {})
   req.end('archive')
@@ -430,15 +431,32 @@ test('fallback client disconnect cancels work after the complete request body', 
 
 test('fallback success remains successful when its cleanup completes after the upload deadline', async (t) => {
   const { request } = await fixture(t, { config: { uploadTimeoutMs: 30 }, fallbacks: {
-    async upload(file, { signal } = {}) {
+    async upload(server, file, { signal } = {}) {
       assert.ok(signal)
       for await (const chunk of file) void chunk
       // Simulate an already committed service completing cleanup after cancellation.
       await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
-      return { servers: ['main1'] }
+      return { server: 'main1' }
     },
   } })
-  const response = await request('/fallback/upload', rawFallback())
+  const response = await request('/fallback/upload?server=main1', rawFallback())
   assert.equal(response.status, 200)
-  assert.deepEqual(await response.json(), { message: 'Success', servers: ['main1'] })
+  assert.deepEqual(await response.json(), { message: 'Success', server: 'main1' })
+})
+
+test('fallback upload requires exactly one valid server parameter', async (t) => {
+  const { request } = await fixture(t, { fallbacks: { async upload() { assert.fail('invalid server reached upload') } } })
+  for (const query of ['', '?server=', '?server=main1&server=main2', '?server=..%2Fescape']) {
+    assert.equal((await request('/fallback/upload' + query, rawFallback())).status, 400)
+  }
+})
+
+test('fallback accepts raw file media types and rejects the previous archive format', async (t) => {
+  const { request } = await fixture(t)
+  for (const type of ['application/octet-stream', 'application/vnd.sqlite3', 'application/x-sqlite3']) {
+    assert.equal((await request('/fallback/upload?server=main1', { method: 'POST', headers: { 'Content-Type': type }, body: 'sqlite bytes' })).status, 200)
+  }
+  for (const type of ['application/gzip', 'application/zip', 'multipart/form-data; boundary=test']) {
+    assert.equal((await request('/fallback/upload?server=main1', { method: 'POST', headers: { 'Content-Type': type }, body: 'archive' })).status, 415)
+  }
 })

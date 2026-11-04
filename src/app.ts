@@ -126,12 +126,14 @@ async function receiveUpload(req: IncomingMessage, res: ServerResponse, config: 
   }
 }
 
-async function receiveFallback(req: IncomingMessage, res: ServerResponse, config: AppConfig, fallbacks: FallbackService) {
+async function receiveFallback(req: IncomingMessage, res: ServerResponse, config: AppConfig, fallbacks: FallbackService, server: string) {
   if (req.destroyed || req.aborted) throw new HttpError(400, 'Upload disconnected')
   const mime = req.headers['content-type']?.split(';')[0]?.trim().toLowerCase()
-  if (mime !== 'application/gzip') throw new HttpError(415, 'Expected application/gzip')
+  if (!['application/octet-stream', 'application/vnd.sqlite3', 'application/x-sqlite3'].includes(mime ?? '')) {
+    throw new HttpError(415, 'Expected a raw SQLite file (application/octet-stream)')
+  }
   const limit = Math.min(config.maxUploadBytes, config.maxRequestBytes)
-  if (Number(req.headers['content-length']) > limit) throw new HttpError(413, 'Archive exceeds upload size limit')
+  if (Number(req.headers['content-length']) > limit) throw new HttpError(413, 'File exceeds upload size limit')
   // Keep stream failures from destroying the HTTP socket before its JSON error is sent.
   const body = new PassThrough()
   body.on('error', () => {})
@@ -150,7 +152,7 @@ async function receiveFallback(req: IncomingMessage, res: ServerResponse, config
   let received = 0
   const onData = (chunk: Buffer) => {
     received += chunk.length
-    if (received > limit) fail(new HttpError(413, 'Archive exceeds upload size limit'))
+    if (received > limit) fail(new HttpError(413, 'File exceeds upload size limit'))
   }
   const timer = setTimeout(() => fail(new HttpError(408, 'Upload timed out')), config.uploadTimeoutMs)
   timer.unref()
@@ -159,7 +161,7 @@ async function receiveFallback(req: IncomingMessage, res: ServerResponse, config
   req.on('data', onData)
   req.pipe(body)
   try {
-    const result = await fallbacks.upload(body, { signal: controller.signal })
+    const result = await fallbacks.upload(server, body, { signal: controller.signal })
     // A resolved service has committed; cancellation during cleanup cannot undo it.
     return result
   } catch (error) {
@@ -219,7 +221,7 @@ export function createApp(config: AppConfig, { management, deployments, fallback
         send(200, result)
       } else if (url.pathname === '/fallback/upload') {
         releaseUpload = lifecycle.admit('uploads')
-        const result = await receiveFallback(req, res, config, fallbacks)
+        const result = await receiveFallback(req, res, config, fallbacks, identifier(query(params, 'server')))
         send(200, { message: 'Success', ...result })
       } else if (url.pathname === '/status') {
         const result = params.has('server')

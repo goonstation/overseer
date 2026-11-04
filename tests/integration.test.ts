@@ -45,7 +45,7 @@ test('real HTTP multipart uploads publish files and rejected archives leave the 
   assert.deepEqual((await fs.readdir(game)).sort(), ['.env.build', 'update'])
 })
 
-test('real HTTP fallback archive installs server databases and rejects a mixed unknown-server batch', async (t) => {
+test('real HTTP fallback uploads install one server database and reject unknown servers', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'overseer-fallback-http-'))
   t.after(() => fs.rm(root, { recursive: true, force: true }))
   const config = loadConfig({ API_TOKEN: 'a'.repeat(32), SERVERS_ROOT: root,
@@ -60,15 +60,15 @@ test('real HTTP fallback archive installs server databases and rejects a mixed u
   await once(server, 'listening')
   t.after(() => new Promise((resolve) => { server.close(resolve); server.closeAllConnections() }))
   const url = `http://127.0.0.1:${serverPort(server)}/fallback/upload`
-  const headers = { Authorization: `Bearer ${config.apiToken}`, 'Content-Type': 'application/gzip' }
-  const send = async (entries: [string, string][]) => fetch(url, { method: 'POST', headers, body: await createArchive(entries, 'tar.gz') })
-  const response = await send([['main1.sqlite', 'database one'], ['main2.sqlite', 'database two']])
+  const headers = { Authorization: `Bearer ${config.apiToken}`, 'Content-Type': 'application/octet-stream' }
+  const send = (id: string, body: string) => fetch(url + '?server=' + id, { method: 'POST', headers, body })
+  const response = await send('main1', 'database one')
   assert.equal(response.status, 200)
-  assert.deepEqual(await response.json(), { message: 'Success', servers: ['main1', 'main2'] })
+  assert.deepEqual(await response.json(), { message: 'Success', server: 'main1' })
   const target = path.join(root, 'main1/game/data/fallback.sqlite')
   assert.equal(await fs.readFile(target, 'utf8'), 'database one')
-  assert.equal(await fs.readFile(path.join(root, 'main2/game/data/fallback.sqlite'), 'utf8'), 'database two')
-  assert.equal((await send([['main1.sqlite', 'replacement'], ['missing.sqlite', 'bad']])).status, 404)
-  assert.equal(await fs.readFile(target, 'utf8'), 'database one')
-  assert.equal((await fetch(url, { method: 'POST', headers, body: 'invalid gzip' })).status, 400)
+  await assert.rejects(fs.access(path.join(root, 'main2/game/data/fallback.sqlite')), { code: 'ENOENT' })
+  assert.equal((await send('missing', 'bad')).status, 404)
+  assert.equal((await send('main1', 'replacement')).status, 200)
+  assert.equal(await fs.readFile(target, 'utf8'), 'replacement')
 })

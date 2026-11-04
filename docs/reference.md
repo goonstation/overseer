@@ -137,22 +137,20 @@ Each artifact is published by rename. All names are checked before publication; 
 
 ### Fallback databases
 
-Upload a flat tar.gz containing files such as `main1.sqlite` and `main2.sqlite`:
+Upload one SQLite file as the raw request body, selecting its destination with `server`:
 
 ```sh
 curl -H "Authorization: Bearer $API_TOKEN" \
-  -H 'Content-Type: application/gzip' \
-  --data-binary @fallbacks.tar.gz \
-  http://127.0.0.1:8564/fallback/upload
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary @main1.sqlite \
+  'http://127.0.0.1:8564/fallback/upload?server=main1'
 ```
 
-Each file replaces `$SERVERS_ROOT/<server>/game/data/fallback.sqlite`; the server's `game` directory must already exist. Missing `data` directories are created. Files receive mode `660` and configured game ownership. Success returns `200` with `{ "message": "Success", "servers": ["main1", "main2"] }`.
+The file replaces `$SERVERS_ROOT/main1/game/data/fallback.sqlite`; the server's `game` directory must already exist. Missing `data` directories are created. Files receive mode `660` and configured game ownership. Success returns `200` with `{ "message": "Success", "server": "main1" }`. SQLite media types `application/vnd.sqlite3` and `application/x-sqlite3` are also accepted. Archives and multipart bodies are not supported.
 
-The whole archive is validated first. Empty archives, nested directories, unexpected filenames, unknown servers, links, and unsafe paths reject the batch. Existing upload size, extraction, entry-count, and timeout limits apply. Uploads share server locks with builds and restarts and are included in update draining.
+Existing file/request size and upload timeout limits apply. Uploads share server locks with builds and restarts and are included in update draining. Publication uses an atomic rename: a failed upload leaves the previous file intact. Once the rename commits, cancellation during cleanup does not undo it.
 
-Supply self-contained SQLite snapshots, and ensure the destination fallback databases are not being written by the game or another process. Existing `-wal`, `-shm`, or `-journal` sidecars cause `409`; this check cannot coordinate external writers. Database contents are copied as provided, without schema or integrity validation.
-
-Each replacement uses an atomic rename on its destination filesystem, so readers see a complete old or new file. A failed publication rolls back earlier replacements; rollback failure preserves a logged recovery directory. The batch is not a filesystem transaction: concurrent readers can observe different generations, and a process/power failure can interrupt it. Once publication commits, a later timeout during staging cleanup does not undo it.
+Supply a self-contained SQLite snapshot, and ensure the destination database is not being written by another process. Existing `-wal`, `-shm`, or `-journal` sidecars cause `409`; this check cannot coordinate external writers. Database contents are copied as provided, without schema or integrity validation.
 
 ### Errors and client migration
 

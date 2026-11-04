@@ -38,7 +38,7 @@ Every request requires `Authorization: Bearer <API_TOKEN>`.
 | `GET /operations/<id>` | Restart progress and outcome |
 | `GET /build/check` | Check artifacts using `server`, `buildstamp`, `byond`, and `rustg` |
 | `POST /build/upload?server=...` | Upload artifacts; returns `200` after publication |
-| `POST /fallback/upload` | Upload a flat tar.gz of `<server>.sqlite` fallback databases |
+| `POST /fallback/upload?server=...` | Upload one raw SQLite fallback database |
 | `GET /maintenance` | Drain state and active work |
 
 Build uploads accept multipart fields `build`, `byond`, and `rustg` containing ZIP or tar.gz archives. Builds replace `game/update`; runtime archives contain version directories, and installed versions are immutable.
