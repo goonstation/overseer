@@ -32,7 +32,9 @@ export async function unpackUpload(file: ArchiveFile, config: ArchiveConfig, dir
       String(config.gameUserOwner), String(config.gameUserGroup)], { signal })
   } catch (error) {
     if (signal?.aborted) throw signal.reason
-    onError(error)
+    const detail = typeof error === 'object' && error !== null && 'stderr' in error && typeof error.stderr === 'string'
+      ? error.stderr.trim().slice(0, 4096) : ''
+    onError(detail ? new Error(`Archive extraction failed: ${detail}`, { cause: error }) : error)
     if (errorCode(error) === 2) throw new HttpError(400, 'Invalid or unsafe archive')
     throw new HttpError(500, 'Archive extraction failed')
   }

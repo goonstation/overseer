@@ -298,3 +298,22 @@ test('Node extraction bounds decompressed tar metadata and padding as well as fi
   try { await assert.rejects(upload(session, 'build', padded, 'application/gzip'), { statusCode: 400 }) }
   finally { await session.abort() }
 })
+
+// Regression: extraction diagnostics must reach the reporter used by service logs.
+test('rejected archives report the worker reason while keeping the HTTP error generic', async (t) => {
+  const { config } = await fixture(t)
+  const reported: { error: unknown; context: Record<string, unknown> }[] = []
+  const svc = deployments.createDeploymentService(config, {
+    onError(error, context) { reported.push({ error, context }) },
+  })
+  const session = await svc.beginUpload('alpha')
+  t.after(() => session.abort())
+  const archive = await createArchive([['../outside', 'bad']], 'tar.gz')
+  await assert.rejects(upload(session, 'build', archive, 'application/gzip'), {
+    statusCode: 400, message: 'Invalid or unsafe archive',
+  })
+  assert.equal(reported.length, 1)
+  assert.ok(reported[0].error instanceof Error)
+  assert.match(reported[0].error.message, /Unsafe archive path/)
+  assert.deepEqual(reported[0].context, { action: 'extract', server: 'alpha', artifact: 'build' })
+})
