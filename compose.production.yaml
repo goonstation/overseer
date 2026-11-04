@@ -1,0 +1,3 @@
+services:
+  overseer:
+    image: ${OVERSEER_IMAGE:-ghcr.io/goonstation/overseer:latest}

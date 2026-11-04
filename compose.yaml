@@ -1,0 +1,52 @@
+services:
+  overseer:
+    build:
+      context: .
+    image: overseer:local
+    init: true
+    restart: unless-stopped
+    stop_grace_period: ${OVERSEER_STOP_GRACE_PERIOD:-310s}
+
+    # Administrative exception for this service only: access the host Docker
+    # socket and chown artifacts to the game containers' mapped host UID/GID.
+    # Game containers continue to use the daemon's userns-remap configuration.
+    userns_mode: host
+    user: "0:0"
+
+    env_file:
+      - .env
+    environment:
+      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env before starting Overseer}
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "${SERVER_PORT:-8564}"
+      SERVERS_ROOT: ${SERVERS_ROOT:-/servers}
+      BYOND_ROOT: ${BYOND_ROOT:-/byond}
+      RUSTG_ROOT: ${RUSTG_ROOT:-/rust-g}
+      GAME_USER_OWNER: "${GAME_USER_OWNER:-306969}"
+      GAME_USER_GROUP: "${GAME_USER_GROUP:-306969}"
+      DOCKER_HOST: unix:///var/run/docker.sock
+    ports:
+      - "${OVERSEER_BIND_ADDRESS:-127.0.0.1}:${SERVER_PORT:-8564}:${SERVER_PORT:-8564}"
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+      # Identical absolute paths preserve Compose bind mounts in each ./dc wrapper.
+      - type: bind
+        source: ${SERVERS_ROOT:-/servers}
+        target: ${SERVERS_ROOT:-/servers}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${BYOND_ROOT:-/byond}
+        target: ${BYOND_ROOT:-/byond}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${RUSTG_ROOT:-/rust-g}
+        target: ${RUSTG_ROOT:-/rust-g}
+        bind:
+          create_host_path: false
+

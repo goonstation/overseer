@@ -1,0 +1,9 @@
+# Keep local credentials, dependencies, test output, and unrelated files out of the context.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
