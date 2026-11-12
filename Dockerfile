@@ -23,7 +23,8 @@ ENV NODE_ENV=production \
 # Overseer invokes Docker and the server's Compose wrapper against an external daemon.
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
-RUN ln -s /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+RUN ln -s /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
+    && ln -s /usr/local/bin/docker /usr/bin/docker
 
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules/ ./node_modules/

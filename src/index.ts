@@ -2,7 +2,7 @@ import { createFallbackService } from './fallbacks.js'
 import { createLifecycle } from './lifecycle.js'
 import './instrument.js'
 import type { ErrorReporter } from './services.js'
-import { toError } from './errors.js'
+import { errorLogDetails } from './errors.js'
 import * as Sentry from '@sentry/node'
 import { loadConfig } from './config.js'
 import { createLocks } from './locks.js'
@@ -14,7 +14,7 @@ const config = loadConfig()
 const locks = createLocks()
 const lifecycle = createLifecycle()
 const onError: ErrorReporter = (error, context) => {
-  console.error(JSON.stringify({ level: 'error', message: toError(error).message, ...context }))
+  console.error(JSON.stringify({ level: 'error', ...errorLogDetails(error), ...context }))
   Sentry.captureException(error, { extra: context })
 }
 const server = createApp(config, {
